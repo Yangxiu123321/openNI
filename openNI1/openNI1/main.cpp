@@ -1,95 +1,118 @@
-#include "stdio.h"
-#include <OpenNI.h>
+// YeOpenNI2SimpleUsingOpenCV.cpp : 定义控制台应用程序的入口点。
+//
 
-#include "OniSampleUtilities.h"
+#include <iostream>
+#include "OpenNI.h"
 
-#define SAMPLE_READ_WAIT_TIMEOUT 2000  //2000ms
+// 载入OpenCV头文件
+#include "opencv2/opencv.hpp"
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 
+using namespace std;
 using namespace openni;
+using namespace cv;
 
-int main(int argc, char* argv[])
+int main(int argc, char** argv)
 {
-	//初始化openNI环境
-	Status rc = OpenNI::initialize();
-	if (rc != STATUS_OK)
+	Status status = STATUS_OK;
+	// 初始化OpenNI环境
+	status = OpenNI::initialize();
+	if (status != STATUS_OK)
+		cerr << status << " Error: " << OpenNI::getExtendedError() << endl;
+
+
+	// 声明并打开Device设备，我用的是oebbec。
+	Device devAnyDevice;
+	devAnyDevice.open(ANY_DEVICE);
+	
+	// 创建深度数据流
+	VideoStream streamDepth;
+	streamDepth.create(devAnyDevice, SENSOR_DEPTH);
+
+	// 创建彩色图像数据流
+	VideoStream streamColor;
+	streamColor.create(devAnyDevice, SENSOR_COLOR);
+
+	// 设置深度图像视频模式
+	VideoMode mModeDepth;
+	// 分辨率大小
+	mModeDepth.setResolution(640, 480);
+	// 每秒30帧
+	mModeDepth.setFps(30);
+	// 像素格式
+	mModeDepth.setPixelFormat(PIXEL_FORMAT_DEPTH_1_MM);
+
+	streamDepth.setVideoMode(mModeDepth);
+
+	// 同样的设置彩色图像视频模式
+	VideoMode mModeColor;
+	mModeColor.setResolution(640, 480);
+	mModeColor.setFps(30);
+	mModeColor.setPixelFormat(PIXEL_FORMAT_RGB888);
+	streamColor.setVideoMode(mModeColor);
+
+	// 图像模式注册
+	if (devAnyDevice.isImageRegistrationModeSupported(
+		IMAGE_REGISTRATION_DEPTH_TO_COLOR))
 	{
-		printf("Initialize failed\n%s\n",OpenNI::getExtendedError());
-		return 1;
+		devAnyDevice.setImageRegistrationMode(IMAGE_REGISTRATION_DEPTH_TO_COLOR);
 	}
 
-	//声明并打开Device设备
-	Device device;
+	// 打开深度和图像数据流
+	streamDepth.start();
+	streamColor.start();
 
-	if (argc < 2)
-		rc = device.open(ANY_DEVICE);
-	else
-		rc = device.open(argv[1]);
+	// 创建OpenCV图像窗口
+	namedWindow("Depth Image", CV_WINDOW_AUTOSIZE);
+	namedWindow("Color Image", CV_WINDOW_AUTOSIZE);
 
-	if (rc != STATUS_OK)
+	// 获得最大深度值
+	int iMaxDepth = streamDepth.getMaxPixelValue();
+	cout << iMaxDepth << endl;
+
+	// 循环读取数据流信息并保存在VideoFrameRef中
+	VideoFrameRef  frameDepth;
+	VideoFrameRef  frameColor;
+
+	while (true)
 	{
-		printf("Couldn't open device\n%s\n",OpenNI::getExtendedError());
-		return  2;
+		// 读取数据流
+		streamDepth.readFrame(&frameDepth);
+		streamColor.readFrame(&frameColor);
+
+
+		// 将深度数据转换成OpenCV格式
+		const cv::Mat mImageDepth(frameDepth.getHeight(), frameDepth.getWidth(), CV_16UC1, (void*)frameDepth.getData());
+		// 为了让深度图像显示的更加明显一些，将CV_16UC1 ==> CV_8U格式
+		cv::Mat mScaledDepth;
+		mImageDepth.convertTo(mScaledDepth, CV_8U, 255.0 / iMaxDepth);
+		// 显示出深度图像
+		cv::imshow("Depth Image", mScaledDepth);
+
+		// 同样的将彩色图像数据转化成OpenCV格式
+		const cv::Mat mImageRGB(frameColor.getHeight(), frameColor.getWidth(), CV_8UC3, (void*)frameColor.getData());
+		// 首先将RGB格式转换为BGR格式
+		cv::Mat cImageBGR;
+		cv::cvtColor(mImageRGB, cImageBGR, CV_RGB2BGR);
+		// 然后显示彩色图像
+		cv::imshow("Color Image", cImageBGR);
+
+		// 终止快捷键
+		if (cv::waitKey(1) == 'q')
+			break;
 	}
 
-	//声明并打开数据流
-	VideoStream depth;
+	// 关闭数据流
+	streamDepth.destroy();
+	streamColor.destroy();
 
-	if (device.getSensorInfo(SENSOR_DEPTH) != NULL)
-	{
-		rc = depth.create(device,SENSOR_DEPTH);
-		if (rc != STATUS_OK)
-		{
-			printf("Couldn't creat depth stream\n%s\n", OpenNI::getExtendedError());
-			return 3;
-		}
+	// 关闭设备
+	devAnyDevice.close();
 
-		rc = depth.start();
-		if (rc != STATUS_OK)
-		{
-			printf("Couldn't start depth stream\n%d\n",OpenNI::getExtendedError());
-			return 4;
-		}
+	// 最后关闭OpenNI
+	openni::OpenNI::shutdown();
 
-		//读取数据流信息并保存在VideoFrameRef中
-		VideoFrameRef frame;
-
-		while (!wasKeyboardHit())
-		{
-			int changedStreamDummy;
-			VideoStream* pStream = &depth;
-
-			rc = OpenNI::waitForAnyStream(&pStream, 1, &changedStreamDummy, SAMPLE_READ_WAIT_TIMEOUT);
-			if (rc != STATUS_OK)
-			{
-				printf("Wait failed! (timeout is %d ms)\n%s\n", SAMPLE_READ_WAIT_TIMEOUT, OpenNI::getExtendedError());
-				continue;
-			}
-
-			rc = depth.readFrame(&frame);
-			if (rc != STATUS_OK)
-			{
-				printf("Read failed!\n%s\n", OpenNI::getExtendedError());
-				continue;
-			}
-
-			if (frame.getVideoMode().getPixelFormat() != PIXEL_FORMAT_DEPTH_1_MM && frame.getVideoMode().getPixelFormat() != PIXEL_FORMAT_DEPTH_100_UM)
-			{
-				printf("Unexpected frame format\n");
-				continue;
-			}
-
-			DepthPixel* pDepth = (DepthPixel*)frame.getData();
-
-			int middleIndex = (frame.getHeight() + 1)*frame.getWidth() / 2;
-
-			printf("[%08llu] %8d\n", (long long)frame.getTimestamp(), pDepth[middleIndex]);
-		}
-
-		depth.stop();
-		depth.destroy();
-		device.close();
-		OpenNI::shutdown();
-
-		return 0;
-		}
-	}
+	return 0;
+}
