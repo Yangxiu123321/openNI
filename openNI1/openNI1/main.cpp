@@ -1,118 +1,131 @@
-// YeOpenNI2SimpleUsingOpenCV.cpp : 定义控制台应用程序的入口点。
-//
+#include <stdio.h>
+#include <OpenNI.h> 
 
-#include <iostream>
-#include "OpenNI.h"
+#include "OniSampleUtilities.h"
 
-// 载入OpenCV头文件
-#include "opencv2/opencv.hpp"
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#define SAMPLE_READ_WAIT_TIMEOUT 2000 //2000ms
 
-using namespace std;
-using namespace openni;
-using namespace cv;
+using namespace openni;  // The entire C++ API is available under the openni namespace.
 
-int main(int argc, char** argv)
+
+int main(int argc, char* argv[])
 {
-	Status status = STATUS_OK;
-	// 初始化OpenNI环境
-	status = OpenNI::initialize();
-	if (status != STATUS_OK)
-		cerr << status << " Error: " << OpenNI::getExtendedError() << endl;
-
-
-	// 声明并打开Device设备，我用的是oebbec。
-	Device devAnyDevice;
-	devAnyDevice.open(ANY_DEVICE);
-	
-	// 创建深度数据流
-	VideoStream streamDepth;
-	streamDepth.create(devAnyDevice, SENSOR_DEPTH);
-
-	// 创建彩色图像数据流
-	VideoStream streamColor;
-	streamColor.create(devAnyDevice, SENSOR_COLOR);
-
-	// 设置深度图像视频模式
-	VideoMode mModeDepth;
-	// 分辨率大小
-	mModeDepth.setResolution(640, 480);
-	// 每秒30帧
-	mModeDepth.setFps(30);
-	// 像素格式
-	mModeDepth.setPixelFormat(PIXEL_FORMAT_DEPTH_1_MM);
-
-	streamDepth.setVideoMode(mModeDepth);
-
-	// 同样的设置彩色图像视频模式
-	VideoMode mModeColor;
-	mModeColor.setResolution(640, 480);
-	mModeColor.setFps(30);
-	mModeColor.setPixelFormat(PIXEL_FORMAT_RGB888);
-	streamColor.setVideoMode(mModeColor);
-
-	// 图像模式注册
-	if (devAnyDevice.isImageRegistrationModeSupported(
-		IMAGE_REGISTRATION_DEPTH_TO_COLOR))
+	// Be sure to call openni::OpenNI::initialize(), to make sure all drivers are loaded 
+	// If no drivers are found, this function will fail. If it does, you can get some basic
+	// log by calling openni::OpenNI::getExtendedError() (which returns a string) 
+	Status rc = OpenNI::initialize();
+	if (rc != STATUS_OK)
 	{
-		devAnyDevice.setImageRegistrationMode(IMAGE_REGISTRATION_DEPTH_TO_COLOR);
+		// getExtendedError() method returns additional, human-readable information about the error.
+		printf("Initialize failed\n%s\n", OpenNI::getExtendedError());
+		return 1;
 	}
 
-	// 打开深度和图像数据流
-	streamDepth.start();
-	streamColor.start();
+	// Provides an interface to a single sensor device connected to the system. Requires OpenNI 
+	// to be initialized before it can be created. Devices provide access to Streams.
+	Device device;
 
-	// 创建OpenCV图像窗口
-	namedWindow("Depth Image", CV_WINDOW_AUTOSIZE);
-	namedWindow("Color Image", CV_WINDOW_AUTOSIZE);
+	// Device::open():  connects to a physical hardware device
+	// This function returns a status code indicating either success or what error occurred.
+	if (argc < 2)
+		rc = device.open(ANY_DEVICE);
+	else
+		rc = device.open(argv[1]);
 
-	// 获得最大深度值
-	int iMaxDepth = streamDepth.getMaxPixelValue();
-	cout << iMaxDepth << endl;
-
-	// 循环读取数据流信息并保存在VideoFrameRef中
-	VideoFrameRef  frameDepth;
-	VideoFrameRef  frameColor;
-
-	while (true)
+	if (rc != STATUS_OK)
 	{
-		// 读取数据流
-		streamDepth.readFrame(&frameDepth);
-		streamColor.readFrame(&frameColor);
-
-
-		// 将深度数据转换成OpenCV格式
-		const cv::Mat mImageDepth(frameDepth.getHeight(), frameDepth.getWidth(), CV_16UC1, (void*)frameDepth.getData());
-		// 为了让深度图像显示的更加明显一些，将CV_16UC1 ==> CV_8U格式
-		cv::Mat mScaledDepth;
-		mImageDepth.convertTo(mScaledDepth, CV_8U, 255.0 / iMaxDepth);
-		// 显示出深度图像
-		cv::imshow("Depth Image", mScaledDepth);
-
-		// 同样的将彩色图像数据转化成OpenCV格式
-		const cv::Mat mImageRGB(frameColor.getHeight(), frameColor.getWidth(), CV_8UC3, (void*)frameColor.getData());
-		// 首先将RGB格式转换为BGR格式
-		cv::Mat cImageBGR;
-		cv::cvtColor(mImageRGB, cImageBGR, CV_RGB2BGR);
-		// 然后显示彩色图像
-		cv::imshow("Color Image", cImageBGR);
-
-		// 终止快捷键
-		if (cv::waitKey(1) == 'q')
-			break;
+		printf("Couldn't open device\n%s\n", OpenNI::getExtendedError());
+		return 2;
 	}
 
-	// 关闭数据流
-	streamDepth.destroy();
-	streamColor.destroy();
+	VideoStream depth;  // VideoStream: Abstracts a single video stream. Obtained from a specific Device.
 
-	// 关闭设备
-	devAnyDevice.close();
+						// Get the SensorInfo for a specific sensor type on this device
+						// The SensorInfo is useful for determining which video modes are supported by the sensor
+						// Parameters: sensorType of sensor to get information
+						// Returns: SensorInfo object corresponding to the sensor type specified,or NULL if such a sensor is not available from this device.
+	if (device.getSensorInfo(SENSOR_DEPTH) != NULL)
+	{
+		// Before VideoStream object can be used, this object must be initialized with the VideoStream::create() function.
+		// The create() function requires a valid initialized device. Once created, 
+		// you should call the VideoStream::start() function to start the flow of data
+		rc = depth.create(device, SENSOR_DEPTH);
+		if (rc != STATUS_OK)
+		{
+			printf("Couldn't create depth stream\n%s\n", OpenNI::getExtendedError());
+			return 3;
+		}
+	}
 
-	// 最后关闭OpenNI
-	openni::OpenNI::shutdown();
+	rc = depth.start();  // Start data generation from the video stream
+	if (rc != STATUS_OK)
+	{
+		printf("Couldn't start the depth stream\n%s\n", OpenNI::getExtendedError());
+		return 4;
+	}
+
+	VideoFrameRef frame;  // VideoFrameRef: Abstracts a single video from and related meta-data. Obtained from a specific Stream.
+
+						  // Polling based data reading
+	while (!wasKeyboardHit())
+	{
+		int changedStreamDummy;
+		VideoStream* pStream = &depth;
+
+		// A system of polling for stream access can be implemented by using the OpenNI::waitForAnyStream() function. 
+		// When called, it blocks until any of the streams in the list have new data available,or the timeout has passed.
+		// It then returns a status code and indicates which stream has data available.
+		rc = OpenNI::waitForAnyStream(&pStream, 1, &changedStreamDummy, SAMPLE_READ_WAIT_TIMEOUT);
+		if (rc != STATUS_OK)
+		{
+			printf("Wait failed! (timeout is %d ms)\n%s\n", SAMPLE_READ_WAIT_TIMEOUT, OpenNI::getExtendedError());
+			continue;
+		}
+
+		// Once a VideoStream has been created, data can be read from it directly with the VideoStream::readFrame() function.
+		rc = depth.readFrame(&frame);
+		if (rc != STATUS_OK)
+		{
+			printf("Read failed!\n%s\n", OpenNI::getExtendedError());
+			continue;
+		}
+
+		// getVideoMode() can be used to determine the video mode settings of the sensor
+		// This information includes the pixel format and resolution of the image, as well as the frame rate 
+		// PIXEL_FORMAT_DEPTH_1_MM: The values are in depth pixel with 1mm accuracy
+		if (frame.getVideoMode().getPixelFormat() != PIXEL_FORMAT_DEPTH_1_MM && frame.getVideoMode().getPixelFormat() != PIXEL_FORMAT_DEPTH_100_UM)
+		{
+			printf("Unexpected frame format\n");
+			continue;
+		}
+
+		// VideoFrameRef::getData() function that returns a pointer directly to the underlying frame data.
+		// This will be a void pointer, so it must be cast using the data type of the individual pixels in order to be properly indexed.
+		DepthPixel* pDepth = (DepthPixel*)frame.getData();
+
+		// getHeight() and getWidth() functions are provided to easily determine the resolution of the frame
+		int middleIndex = (frame.getHeight() + 1) * frame.getWidth() / 2;
+
+		// getTimestamp: Provides timestamp of frame, measured in microseconds from an arbitrary zero
+		printf("[%08llu] %8d\n", (long long)frame.getTimestamp(), pDepth[middleIndex]);
+
+		// %md：m为指定的输出字段的宽度。如果数据的位数小于m，则左端补以空格，若大于m，则按实际位数输出
+		// 0：有0表示指定空位填0,如省略表示指定空位不填。
+		// u格式：以无符号十进制形式输出整数。对长整型可以用"%lu"格式输出
+	}
+
+	depth.stop();    // Stop the flow of data
+
+	depth.destroy(); // Destroy the stream
+
+					 // The close() function properly shuts down the hardware device. As a best practice, any device
+					 // that is opened should be closed. This will leave the driver and hardware device in a known
+					 // state so that future applications will not have difficulty connecting to them.
+	device.close();
+
+	// When an application is ready to exit, the OpenNI::shutdown() function 
+	// should be called to shutdown all drivers and properly clean up.
+	OpenNI::shutdown();
 
 	return 0;
 }
